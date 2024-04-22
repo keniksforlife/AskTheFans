@@ -1,0 +1,9 @@
+fastapi==0.79.0
+uvicorn==0.17.6
+numpy==1.23.1
+google-cloud-bigquery==3.0.1
+google-auth==2.6.2
+pinecone-client==2.0.3
+sentence-transformers==2.2.0
+openai==0.10.2
+python-dotenv==0.20.0
