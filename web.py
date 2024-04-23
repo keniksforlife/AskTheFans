@@ -1,7 +1,8 @@
+import os
+from dotenv import load_dotenv
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 import uvicorn
-import os
 import numpy as np
 import base64
 from tempfile import NamedTemporaryFile
@@ -9,7 +10,6 @@ from google.oauth2 import service_account
 from google.cloud import bigquery
 from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer
-from dotenv import load_dotenv
 import openai
 
 # Load environment variables
@@ -18,8 +18,8 @@ load_dotenv()
 # App configuration
 app = FastAPI()
 
-OPENAI_KEY = os.environ["OPENAI_KEY"]
-PINECONE_API = os.environ["PINECONE_API"]
+OPENAI_KEY = os.getenv("OPENAI_KEY")
+PINECONE_API = os.getenv("PINECONE_API")
 
 # Pinecone API setup
 pinecone_api_key = os.environ.get("PINECONE_API_KEY", PINECONE_API)
