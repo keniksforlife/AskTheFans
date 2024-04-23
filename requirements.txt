@@ -5,4 +5,3 @@ google-cloud-bigquery
 pinecone-client
 sentence-transformers
 openai==0.28
-dotenv
