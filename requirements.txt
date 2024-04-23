@@ -2,8 +2,7 @@ fastapi
 uvicorn
 numpy
 google-cloud-bigquery
-google-auth
 pinecone-client
 sentence-transformers
 openai==0.28
-python-dotenv
+dotenv
