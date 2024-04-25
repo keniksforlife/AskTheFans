@@ -82,6 +82,11 @@ def generate_response(question, answer):
     last_message = response['choices'][0]['message']['content']
     return last_message
 
+
+@app.get("/")
+async def read_root():
+    return {"Hello": "World"}
+
 @app.post("/query")
 async def run_query(request: Request):
     data = await request.json()
