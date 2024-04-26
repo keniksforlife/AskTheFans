@@ -8,7 +8,7 @@ from tempfile import NamedTemporaryFile
 from google.oauth2 import service_account
 from google.cloud import bigquery
 from pinecone import Pinecone
-# from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer
 import openai
 
 # Load environment variables
@@ -29,7 +29,7 @@ index = None
 async def startup_event():
     global model, pc, index
     # Asynchronously load SentenceTransformer model
-    # model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+    model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
 
     # Pinecone API setup
     pinecone_api_key = os.environ.get("PINECONE_API_KEY", PINECONE_API)
@@ -41,10 +41,10 @@ async def startup_event():
         pc.create_index(name=index_name, dimension=512, metric='cosine')
     index = pc.Index(index_name)
 
-# def generate_vector(text):
-#     embeddings = model.encode(text)  # This produces a vector
-#     adjusted_embeddings = adjust_vector_dimension(embeddings, 512)  # Ensure 512 dimensions
-#     return adjusted_embeddings.tolist()
+def generate_vector(text):
+    embeddings = model.encode(text)  # This produces a vector
+    adjusted_embeddings = adjust_vector_dimension(embeddings, 512)  # Ensure 512 dimensions
+    return adjusted_embeddings.tolist()
 
 def adjust_vector_dimension(vector, target_dim=512):
     current_dim = vector.shape[0]
@@ -108,7 +108,7 @@ async def run_query(request: Request):
     question = data.get('question', '')
     if not question:
         raise HTTPException(status_code=400, detail="No question provided")
-    query_vector = question #generate_vector(question)
+    query_vector = generate_vector(question)
     query_results = index.query(vector=query_vector, top_k=1, include_metadata=True, filter={"answer": {"$ne": ""}})
     if query_results['matches']:
         match = query_results['matches'][0]
