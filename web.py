@@ -11,6 +11,7 @@ from google.cloud import bigquery
 from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer
 import openai
+import logging
 
 # Load environment variables
 load_dotenv()
@@ -25,6 +26,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 
 OPENAI_KEY = os.getenv("OPENAI_KEY")
 PINECONE_API = os.getenv("PINECONE_API")
@@ -113,20 +118,29 @@ async def read_root():
 
 @app.post("/query")
 async def run_query(request: Request):
+    logging.info("Received a new query request.")
     data = await request.json()
     question = data.get('question', '')
     if not question:
         raise HTTPException(status_code=400, detail="No question provided")
+    
+    logging.info("Generating vector for the question.", question)
     query_vector = generate_vector(question)
+
+    logging.info("Executing Pinecone query.")
     query_results = index.query(vector=query_vector, top_k=1, include_metadata=True, filter={"answer": {"$ne": ""}})
     if query_results['matches']:
         match = query_results['matches'][0]
         metadata = match.get('metadata', {})
         if 'answer' in metadata:
             answer = metadata['answer']
+
+            logging.info("Generating response using the provided answer.", answer)
             response_content = generate_response(question, answer)
             return JSONResponse(content={"question": question, "answer": response_content, "metadata": metadata})
         else:
+            logging.error("Answer not found in metadata.")
             raise HTTPException(status_code=404, detail="Answer not found in metadata")
     else:
+        logging.error("No relevant answers found for the question.")
         raise HTTPException(status_code=404, detail="No relevant answers found")
