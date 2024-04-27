@@ -2,6 +2,7 @@ import os
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 import numpy as np
 import base64
 from tempfile import NamedTemporaryFile
@@ -16,6 +17,14 @@ load_dotenv()
 
 # App configuration
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Specify domains for Botpress server if needed
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 OPENAI_KEY = os.getenv("OPENAI_KEY")
 PINECONE_API = os.getenv("PINECONE_API")
