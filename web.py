@@ -33,6 +33,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 OPENAI_KEY = os.getenv("OPENAI_KEY")
 PINECONE_API = os.getenv("PINECONE_API")
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 # Global variables for asynchronous initialization
 model = None
@@ -90,14 +91,21 @@ def setup_openai(api_key):
 
 def generate_response(question, answer):
     setup_openai(OPENAI_KEY)
+
+    system_message = """You are a knowledgeable assistant. Summarize the provided experiences and give informed advice 
+                      that considers these specifics. Offer empathy and understand the complexity of the user's situation. 
+                      Provide direct, clear, and helpful advice without prefacing your response with apologies or qualifiers. 
+                      Focus on delivering factual information and practical recommendations."""
+
     response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
         messages=[
-            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "system", "content": system_message},
             {"role": "user", "content": question},
-            {"role": "assistant", "content": answer},
-            {"role": "user", "content": "Can you explain more about that?"}
-        ]
+            {"role": "assistant", "content": answer}
+        ],
+        temperature=0.5,  # This temperature promotes precision and clarity
+        max_tokens=250    # Constrained to ensure brevity
     )
     last_message = response['choices'][0]['message']['content']
     return last_message
@@ -124,7 +132,7 @@ async def run_query(request: Request):
     if not question:
         raise HTTPException(status_code=400, detail="No question provided")
     
-    logging.info("Generating vector for the question.", question)
+    logging.info("Generating vector for the question.")
     query_vector = generate_vector(question)
 
     logging.info("Executing Pinecone query.")
@@ -132,10 +140,19 @@ async def run_query(request: Request):
     if query_results['matches']:
         match = query_results['matches'][0]
         metadata = match.get('metadata', {})
+        match_score = match.get('score', 0)
+
+        logging.info("Match Score: {match_score}")
+
+         # Check if the score is above a defined threshold
+        if match_score < 0.8:  # Example threshold
+            logging.info("Match score is too low.{match_score}")
+            raise HTTPException(status_code=404, detail="Match confidence too low")
+
         if 'answer' in metadata:
             answer = metadata['answer']
-
-            logging.info("Generating response using the provided answer.", answer)
+           
+            logging.info("Generating response using the provided answer.")
             response_content = generate_response(question, answer)
             return JSONResponse(content={"question": question, "answer": response_content, "metadata": metadata})
         else:
