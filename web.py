@@ -145,15 +145,16 @@ async def run_query(request: Request):
         logging.info("Match Score:")
         logging.info(match_score)
 
+        logging.info(metadata)
+
          # Check if the score is above a defined threshold
-        if match_score < 0.8:  # Example threshold
-            logging.info("Match score is too low.{match_score}")
+        if match_score < 0.7:  # Example threshold
+            logging.info("Match score is too low.")
             raise HTTPException(status_code=404, detail="Match confidence too low")
 
         if 'answer' in metadata:
             answer = metadata['answer']
            
-            logging.info(answer)
             logging.info("Generating response using the provided answer.")
             response_content = generate_response(question, answer)
             return JSONResponse(content={"question": question, "answer": response_content, "metadata": metadata})
