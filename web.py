@@ -142,7 +142,8 @@ async def run_query(request: Request):
         metadata = match.get('metadata', {})
         match_score = match.get('score', 0)
 
-        logging.info("Match Score: {match_score}")
+        logging.info("Match Score:")
+        logging.info(match_score)
 
          # Check if the score is above a defined threshold
         if match_score < 0.8:  # Example threshold
@@ -152,6 +153,7 @@ async def run_query(request: Request):
         if 'answer' in metadata:
             answer = metadata['answer']
            
+            logging.info(answer)
             logging.info("Generating response using the provided answer.")
             response_content = generate_response(question, answer)
             return JSONResponse(content={"question": question, "answer": response_content, "metadata": metadata})
