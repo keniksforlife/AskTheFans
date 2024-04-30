@@ -44,8 +44,14 @@ index = None
 async def startup_event():
     global model, pc, index
     # Asynchronously load SentenceTransformer model
-    model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+    try:
+        model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+        logging.info("Model loaded successfully.")
+    except Exception as e:
+        model = None
+        logging.error(f"Failed to load model: {e}")
 
+    logging.info('hello')
     # Pinecone API setup
     pinecone_api_key = os.environ.get("PINECONE_API_KEY", PINECONE_API)
     pc = Pinecone(api_key=pinecone_api_key)
@@ -56,10 +62,26 @@ async def startup_event():
         pc.create_index(name=index_name, dimension=512, metric='cosine')
     index = pc.Index(index_name)
 
-def generate_vector(text):
+def generate_vector2(text):
     embeddings = model.encode(text)  # This produces a vector
     adjusted_embeddings = adjust_vector_dimension(embeddings, 512)  # Ensure 512 dimensions
     return adjusted_embeddings.tolist()
+
+def generate_vector(text):
+    if text is None or text.strip() == "":
+        logging.error("Empty or None text provided to generate_vector")
+        return []
+
+    try:
+        embeddings = model.encode(text)  # This produces a vector
+        if embeddings is None:
+            logging.error("Model returned None embeddings")
+            return []
+        adjusted_embeddings = adjust_vector_dimension(embeddings, 512)  # Ensure 512 dimensions
+        return adjusted_embeddings.tolist()
+    except Exception as e:
+        logging.error(f"Error during vector generation: {e}")
+        return []
 
 def adjust_vector_dimension(vector, target_dim=512):
     current_dim = vector.shape[0]
@@ -86,6 +108,60 @@ def fetch_data_from_bigquery():
     results = client.query(query).result()
     return [(row['post_id'], row['question'], row['answer']) for row in results]
 
+def process_and_upsert_data():
+    logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
+
+    try:
+        data = fetch_data_from_bigquery()
+    except Exception as e:
+        logging.error(f"Failed to fetch data: {e}")
+        return
+
+
+    max_bytes = 38000  # Maximum size of metadata in bytes
+
+    for post_id, post_text, comment_text in data:
+        max_length_post = max_bytes // 2
+        max_length_comment = max_bytes // 2
+
+        try:
+            encoded_post_text = post_text.encode('utf-8')
+            encoded_comment_text = comment_text.encode('utf-8')
+        except UnicodeEncodeError as e:
+            logging.error(f"Encoding error for post ID {post_id}: {e}")
+            continue
+
+        if len(encoded_post_text) > max_length_post:
+            post_text = post_text.encode('utf-8')[:max_length_post].decode('utf-8', 'ignore')
+        
+        if len(encoded_comment_text) > max_length_comment:
+            comment_text = comment_text.encode('utf-8')[:max_length_comment].decode('utf-8', 'ignore')
+
+        combined_text = post_text + " " + comment_text
+        # logging.info(combined_text)
+
+        try:
+            combined_vector = generate_vector(combined_text)
+        except Exception as e:
+            logging.error(f"Failed to generate vector for post ID {post_id}: {e}")
+            continue
+
+        combined_vector_id = f"qa_{post_id}"
+        print("processing " + combined_vector_id)
+
+        try:
+            response = index.upsert(vectors=[
+                (combined_vector_id, combined_vector, {
+                    "post_id": post_id, 
+                    "question": post_text, 
+                    "answer": comment_text
+                })
+            ])
+            print(f"Upserted post ID {post_id} with response: {response}")
+        except Exception as e:
+            logging.error(f"Error upserting post ID {post_id}: {e}")
+            logging.info(f"Failed text: Question - {post_text} | Answer - {comment_text}")
+
 def setup_openai(api_key):
     openai.api_key = api_key
 
@@ -110,6 +186,27 @@ def generate_response(question, answer):
     last_message = response['choices'][0]['message']['content']
     return last_message
 
+def simplify_response(original_text):
+    setup_openai(OPENAI_KEY)
+    
+    try:
+        # Request to the AI model to correct grammar and spelling only
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+            {"role": "system", "content": "This is a simple task. Correct spelling and grammar errors."},
+            {"role": "user", "content": original_text}
+        ],
+        # max_tokens=len(original_text.split()) + 10,  # Slightly more tokens to allow for corrections
+        temperature=0.1  # Low temperature to minimize creativity and maintain originality
+        )
+        corrected_text = response['choices'][0]['message']['content']
+        return corrected_text
+    except Exception as e:
+        # Log errors and return original text if there's a problem
+        logging.error(f"Failed to simplify response: {e}")
+        return original_text
+    
 @app.get("/health")
 async def health_check():
     return {"status": "alive"}
@@ -119,6 +216,10 @@ async def readiness_check():
     if model is None or pc is None or index is None:
         raise HTTPException(status_code=503, detail="Service not ready")
     return {"status": "ready"}
+
+@app.get("/upsert")
+async def upsert():
+    process_and_upsert_data()
 
 @app.get("/")
 async def read_root():
@@ -148,16 +249,17 @@ async def run_query(request: Request):
         logging.info(metadata)
 
          # Check if the score is above a defined threshold
-        if match_score < 0.7:  # Example threshold
+        if match_score < 0.5:  # Example threshold
             logging.info("Match score is too low.")
             raise HTTPException(status_code=404, detail="Match confidence too low")
 
         if 'answer' in metadata:
             answer = metadata['answer']
-           
+            
             logging.info("Generating response using the provided answer.")
-            response_content = generate_response(question, answer)
-            return JSONResponse(content={"question": question, "answer": response_content, "metadata": metadata})
+            response_content = simplify_response(answer)
+
+            return JSONResponse(content={"question": question, "answer": response_content, "original": answer, "metadata": metadata})
         else:
             logging.error("Answer not found in metadata.")
             raise HTTPException(status_code=404, detail="Answer not found in metadata")
