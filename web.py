@@ -8,7 +8,7 @@ import base64
 from tempfile import NamedTemporaryFile
 from google.oauth2 import service_account
 from google.cloud import bigquery
-from pinecone import Pinecone
+from pinecone import Pinecone, ServerlessSpec
 from sentence_transformers import SentenceTransformer
 import openai
 import logging
@@ -52,6 +52,7 @@ async def startup_event():
         logging.error(f"Failed to load model: {e}")
 
     logging.info('hello')
+    
     # Pinecone API setup
     pinecone_api_key = os.environ.get("PINECONE_API_KEY", PINECONE_API)
     pc = Pinecone(api_key=pinecone_api_key)
@@ -59,7 +60,7 @@ async def startup_event():
     # Create or connect to a Pinecone index
     index_name = "askthefans"
     if index_name not in pc.list_indexes().names():
-        pc.create_index(name=index_name, dimension=512, metric='cosine')
+        pc.create_index(name=index_name, dimension=512, metric='cosine', spec=ServerlessSpec(cloud="aws",region="us-east-1"))
     index = pc.Index(index_name)
 
 def generate_vector2(text):
@@ -104,9 +105,9 @@ def authenticate_google_cloud():
 def fetch_data_from_bigquery():
     credentials = authenticate_google_cloud()
     client = bigquery.Client(credentials=credentials)
-    query = "SELECT post_id, question, answer FROM `civic-badge-410308.askthefans.cleaned_data`"
+    query = "SELECT post_id, question, answer, answer_index FROM `civic-badge-410308.askthefans.question_answers`"
     results = client.query(query).result()
-    return [(row['post_id'], row['question'], row['answer']) for row in results]
+    return [(row['post_id'], row['question'], row['answer'], row['answer_index']) for row in results]
 
 def process_and_upsert_data():
     logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -120,7 +121,7 @@ def process_and_upsert_data():
 
     max_bytes = 38000  # Maximum size of metadata in bytes
 
-    for post_id, post_text, comment_text in data:
+    for post_id, post_text, comment_text, answer_index in data:
         max_length_post = max_bytes // 2
         max_length_comment = max_bytes // 2
 
@@ -146,7 +147,7 @@ def process_and_upsert_data():
             logging.error(f"Failed to generate vector for post ID {post_id}: {e}")
             continue
 
-        combined_vector_id = f"qa_{post_id}"
+        combined_vector_id = f"qa_{post_id}_{answer_index}"
         print("processing " + combined_vector_id)
 
         try:
@@ -190,7 +191,8 @@ def simplify_response(original_text):
     setup_openai(OPENAI_KEY)
     
     try:
-        # Request to the AI model to correct grammar and spelling only
+        # Request to the AI model to correct grammar and spelling on
+        # ly
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
@@ -237,32 +239,52 @@ async def run_query(request: Request):
     query_vector = generate_vector(question)
 
     logging.info("Executing Pinecone query.")
-    query_results = index.query(vector=query_vector, top_k=1, include_metadata=True, filter={"answer": {"$ne": ""}})
-    if query_results['matches']:
-        match = query_results['matches'][0]
+    top_k_results = 5  # Adjust based on desired number of results
+    query_results = index.query(vector=query_vector, top_k=top_k_results, include_metadata=True, filter={"answer": {"$ne": ""}})
+    responses = []
+    seen_answers = set()  # Track seen answers to avoid duplicates
+
+    for match in query_results['matches']:
         metadata = match.get('metadata', {})
         match_score = match.get('score', 0)
 
-        logging.info("Match Score:")
-        logging.info(match_score)
-
+        logging.info(f"Match Score: {match_score}")
         logging.info(metadata)
 
-         # Check if the score is above a defined threshold
-        if match_score < 0.5:  # Example threshold
-            logging.info("Match score is too low.")
-            raise HTTPException(status_code=404, detail="Match confidence too low")
+        if match_score < 0.5:  # Threshold for relevance
+            logging.info(f"Match score {match_score} is too low for post ID {metadata.get('post_id')}.")
+            continue
 
-        if 'answer' in metadata:
-            answer = metadata['answer']
-            
-            logging.info("Generating response using the provided answer.")
-            response_content = simplify_response(answer)
+        answer = metadata.get('answer', "")
+        if len(answer.strip()) < 30:  # Minimum character length filter
+            logging.info(f"Filtered out too short answer: {answer}")
+            continue
 
-            return JSONResponse(content={"question": question, "answer": response_content, "original": answer, "metadata": metadata})
-        else:
-            logging.error("Answer not found in metadata.")
-            raise HTTPException(status_code=404, detail="Answer not found in metadata")
-    else:
+        if answer in seen_answers:  # Check for duplicates
+            logging.info(f"Duplicate answer filtered out: {answer}")
+            continue
+
+        seen_answers.add(answer)  # Mark this answer as seen
+        related_question = metadata.get('question', 'No related question provided')
+
+        logging.info("Generating response using the provided answer.")
+        response_content = simplify_response(answer)
+
+        responses.append({
+            "text": response_content,
+            "original": answer,
+            "related_question": related_question,
+            "post_id": metadata.get('post_id'),
+            "score": match_score
+        })
+
+    if not responses:
         logging.error("No relevant answers found for the question.")
         raise HTTPException(status_code=404, detail="No relevant answers found")
+
+    # Include the count of answers in the response
+    return JSONResponse(content={
+        "question": question,
+        "answers_count": len(responses),  # Count of the answers
+        "answers": responses
+    })
