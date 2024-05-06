@@ -251,7 +251,7 @@ async def run_query(request: Request):
         logging.info(f"Match Score: {match_score}")
         logging.info(metadata)
 
-        if match_score < 0.5:  # Threshold for relevance
+        if match_score < 0.6:  # Threshold for relevance
             logging.info(f"Match score {match_score} is too low for post ID {metadata.get('post_id')}.")
             continue
 
